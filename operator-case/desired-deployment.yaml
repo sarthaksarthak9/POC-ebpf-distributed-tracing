@@ -1,0 +1,40 @@
+# The Deployment as the operator wants it. The reconciler replaces the live Deployment with this
+# whenever its pod-template annotations differ. Nothing is added here for tracing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: managed-app
+  namespace: ebpf-poc
+  labels: { managed-by: poc-reconciler }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: managed-app }
+  template:
+    metadata:
+      labels: { app: managed-app }
+      annotations:
+        example.com/owner: "poc-reconciler"
+    spec:
+      containers:
+        - name: app
+          image: node:21-alpine
+          command: ["/bin/sh", "/app/entrypoint.sh"]
+          env:
+            - name: SELF_URL
+              value: http://localhost:3000
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          configMap:
+            name: ebpf-poc-app

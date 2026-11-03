@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: obi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: obi
+  namespace: obi
+---
+# Read-only: OBI reads pod metadata to label spans.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: obi
+rules:
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "services", "nodes"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: obi
+subjects:
+  - kind: ServiceAccount
+    name: obi
+    namespace: obi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: obi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: obi-config
+  namespace: obi
+data:
+  obi-config.yml: |
+    discovery:
+      instrument:
+        - k8s_namespace: ebpf-poc
+    ebpf:
+      # Off by default: without it each hop is a separate trace.
+      context_propagation: all
+    attributes:
+      kubernetes:
+        enable: true
+    otel_traces_export:
+      # Stand-in for Tier 2 (http://10.185.13.105:4318).
+      endpoint: http://jaeger.obi.svc.cluster.local:4318
+      protocol: http/protobuf
+      sampler:
+        name: parentbased_always_on
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: obi
+  namespace: obi
+spec:
+  selector:
+    matchLabels: { app: obi }
+  template:
+    metadata:
+      labels: { app: obi }
+    spec:
+      serviceAccountName: obi
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: obi
+          image: otel/ebpf-instrument:v1.0.0
+          securityContext:
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+            # Not privileged. NET_ADMIN is for context propagation; SYS_ADMIN lets OBI enter the
+            # pod's network namespace to inject into Node.js, which fails without it.
+            capabilities:
+              drop: ["ALL"]
+              add: ["BPF", "PERFMON", "SYS_PTRACE", "NET_RAW", "NET_ADMIN", "SYS_ADMIN", "CHECKPOINT_RESTORE", "DAC_READ_SEARCH"]
+          env:
+            - name: OTEL_EBPF_CONFIG_PATH
+              value: /config/obi-config.yml
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: deployment.environment=dev,site=icolo
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: config, mountPath: /config }
+            - { name: var-run-obi, mountPath: /var/run/obi }
+            - { name: cgroup, mountPath: /sys/fs/cgroup }
+            - { name: security, mountPath: /sys/kernel/security, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: obi-config }
+        - name: var-run-obi
+          emptyDir: {}
+        - name: cgroup
+          hostPath: { path: /sys/fs/cgroup }
+        - name: security
+          hostPath: { path: /sys/kernel/security }

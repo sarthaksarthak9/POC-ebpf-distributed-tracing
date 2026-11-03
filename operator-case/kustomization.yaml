@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ebpf-poc
+
+resources:
+  - reconciler.yaml
+
+configMapGenerator:
+  - name: poc-reconciler-script
+    files:
+      - reconcile.sh
+  - name: poc-reconciler-desired
+    files:
+      - desired-deployment.yaml

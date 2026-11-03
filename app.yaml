@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ebpf-poc-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: ebpf-poc-app }
+  template:
+    metadata:
+      # No tracing annotations: OBI selects the pod by namespace.
+      labels: { app: ebpf-poc-app }
+    spec:
+      containers:
+        - name: app
+          image: node:21-alpine
+          # The image's own entry point is replaced by the start script, as IPSL services do.
+          command: ["/bin/sh", "/app/entrypoint.sh"]
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - name: app
+              mountPath: /app
+      volumes:
+        - name: app
+          configMap:
+            name: ebpf-poc-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ebpf-poc-app
+spec:
+  selector: { app: ebpf-poc-app }
+  ports:
+    - port: 3000
